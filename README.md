@@ -7,6 +7,7 @@ Scraper de vacantes laborales para Bumeran, Computrabajo e Indeed, con arquitect
 
 - Python 3.10+
 - Firefox y geckodriver en PATH (para Selenium)
+- Google Chrome (Indeed usa un driver stealth basado en Chrome)
 - Dependencias Python: selenium, pandas
 
 macOS (Homebrew):
@@ -67,8 +68,8 @@ Los CSV incluyen las columnas `fuente`, `empresa`, `titulo` y `url` (en ese orde
 ## Estructura del proyecto
 
 - `src/core/`: Infraestructura compartida
-	- `base.py`: Clase base para scrapers (gestión de paginación, cierre)
-	- `browser.py`: Factoría de WebDriver (Firefox) con soporte para `SCRAPER_HEADLESS`
+  - `base.py`: Clase base para scrapers (gestión de paginación, cierre)
+  - `browser.py`: Factoría de WebDriver (Firefox) con soporte para `SCRAPER_HEADLESS`
 - `src/bumeran.py`: Scraper de Bumeran (hereda de `BaseScraper`)
 - `src/computrabajo.py`: Scraper de Computrabajo (hereda de `BaseScraper`)
 - `src/indeed.py`: Scraper de Indeed (hereda de `BaseScraper`)
@@ -91,3 +92,4 @@ python3 -m unittest discover tests
 - El modo headless viene activado por defecto; usa `--no-headless` o `SCRAPER_HEADLESS=0` cuando necesites abrir la ventana del navegador.
 - Ejecuta con `--log-level debug` para ver mensajes adicionales de deduplicación, esperas y liberación de recursos.
 - Si necesitas bloquear versiones exactas, genera un lock con tu herramienta preferida (Poetry o pip-tools). Este repo incluye `requirements.txt` para instalaciones simples con pip.
+- El driver stealth de Indeed rota user-agent, idioma y tamaño de ventana para reducir bloqueos. Si quieres desactivarlo, utiliza `SCRAPER_RANDOMIZE_FP=0`.

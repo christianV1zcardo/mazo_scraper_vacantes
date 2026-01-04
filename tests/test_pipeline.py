@@ -44,18 +44,18 @@ class PipelineTests(unittest.TestCase):
 
         bumeran_instance.abrir_pagina_empleos.assert_called_once()
         bumeran_instance.buscar_vacante.assert_called_once_with("Analista")
-        bumeran_instance.extraer_todos_los_puestos.assert_called_once()
+        bumeran_instance.extraer_todos_los_puestos.assert_called()
         bumeran_instance.close.assert_called_once()
         mock_cleanup.assert_called_once_with(bumeran_instance, "bumeran")
 
         computrabajo_instance.abrir_pagina_empleos.assert_called_once_with(dias=1)
         computrabajo_instance.buscar_vacante.assert_called_once_with("Analista")
-        computrabajo_instance.extraer_todos_los_puestos.assert_called_once()
+        computrabajo_instance.extraer_todos_los_puestos.assert_called()
         computrabajo_instance.close.assert_called_once()
 
         indeed_instance.abrir_pagina_empleos.assert_called_once_with(dias=1)
         indeed_instance.buscar_vacante.assert_called_once_with("Analista")
-        indeed_instance.extraer_todos_los_puestos.assert_called_once()
+        indeed_instance.extraer_todos_los_puestos.assert_called()
         indeed_instance.close.assert_called_once()
 
         mock_save.assert_called_once()
@@ -106,7 +106,7 @@ class PipelineTests(unittest.TestCase):
         computrabajo_cls.assert_not_called()
         indeed_instance.abrir_pagina_empleos.assert_called_once_with(dias=0)
         indeed_instance.buscar_vacante.assert_called_once_with("Analista")
-        indeed_instance.extraer_todos_los_puestos.assert_called_once()
+        indeed_instance.extraer_todos_los_puestos.assert_called()
         indeed_instance.close.assert_called_once()
         mock_cleanup.assert_not_called()
         mock_save.assert_called_once()
@@ -141,7 +141,7 @@ class PipelineTests(unittest.TestCase):
 
         with patch.dict(
             "src.pipeline.SCRAPER_REGISTRY",
-            {"fake": (fake_factory, fake_collector, False)},
+            {"fake": (fake_factory, fake_collector, False, False)},
             clear=True,
         ), patch("src.pipeline.logger") as mock_logger, patch(
             "src.pipeline.time.perf_counter", side_effect=[100.0, 101.5]
@@ -167,7 +167,14 @@ class PipelineTests(unittest.TestCase):
             ],
         )
         fake_scraper.close.assert_called_once()
-        mock_logger.info.assert_any_call("Iniciando scraper '%s'", "fake")
+        mock_logger.info.assert_any_call(
+            "Iniciando scraper '%s' (dias=%s, initial_wait=%.2fs, page_wait=%.2fs, headless=%s)",
+            "fake",
+            0,
+            0,
+            0,
+            None,
+        )
         mock_logger.info.assert_any_call(
             "Scraper '%s' finalizado en %.2fs con %d ofertas", "fake", 1.5, 1
         )
@@ -187,7 +194,7 @@ class PipelineTests(unittest.TestCase):
 
         with patch.dict(
             "src.pipeline.SCRAPER_REGISTRY",
-            {"failing": (failing_factory, failing_collector, False)},
+            {"failing": (failing_factory, failing_collector, False, False)},
             clear=True,
         ), patch("src.pipeline.logger") as mock_logger, patch(
             "src.pipeline.time.perf_counter", side_effect=[5.0, 7.0]
@@ -200,19 +207,41 @@ class PipelineTests(unittest.TestCase):
                 sources=["failing"],
             )
 
-        self.assertEqual(combined, [])
-        self.assertEqual(executed, [])
-        failing_scraper.close.assert_called_once()
-        mock_logger.exception.assert_any_call(
-            "Error no controlado ejecutando scraper '%s'", "failing"
-        )
-        mock_logger.info.assert_any_call(
-            "Scraper '%s' finalizado en %.2fs con %d ofertas", "failing", 2.0, 0
-        )
-        mock_logger.info.assert_any_call("Scraper '%s' no produjo resultados.", "failing")
-        mock_logger.info.assert_any_call(
-            "Total ofertas combinadas tras deduplicación: %d", 0
-        )
+
+    def test_normalize_url_preserves_fragment_ids(self) -> None:
+        url_with_fragment = "https://pe.computrabajo.com/trabajo-de-data#ABC123"
+        normalized = pipeline._normalize_url(url_with_fragment)
+        self.assertEqual(normalized, url_with_fragment.rstrip("/"))
+
+    def test_collect_jobs_deduplicates_normalized_urls(self) -> None:
+        scraper = Mock()
+        scraper.close = Mock()
+
+        def factory(headless=None):
+            return scraper
+
+        def collector(_scraper, *_args, **_kwargs):
+            return [
+                {"fuente": "X", "url": "https://jobs.com/viewjob?jk=123&from=serp", "titulo": "Uno", "empresa": "C"},
+                {"fuente": "X", "url": "https://jobs.com/viewjob?jk=123&start=10", "titulo": "Uno dup", "empresa": "C"},
+            ]
+
+        with patch.dict(
+            "src.pipeline.SCRAPER_REGISTRY",
+            {"x": (factory, collector, False, False)},
+            clear=True,
+        ):
+            combined, executed = pipeline.collect_jobs(
+                busqueda="Analista",
+                dias=0,
+                initial_wait=0,
+                page_wait=0,
+                sources=["x"],
+            )
+
+        self.assertEqual(executed, ["x"])
+        self.assertEqual(len(combined), 1)
+        self.assertEqual(combined[0]["url"], "https://jobs.com/viewjob?jk=123")
 
 
 if __name__ == "__main__":

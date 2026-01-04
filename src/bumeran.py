@@ -11,7 +11,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from .core.base import BaseScraper
+from .core.base import BaseScraper, BlockDetected
 
 JobData = Dict[str, Any]
 
@@ -40,15 +40,24 @@ class BumeranScraper(BaseScraper):
 
     def extraer_puestos(self, timeout: int = 10) -> List[JobData]:
         try:
+            if self.detecta_bloqueo():
+                raise BlockDetected("Captcha o bloqueo detectado en Bumeran")
             return self._extract_from_links(timeout=timeout)
         except Exception:
-            return []
+            # Reintento rápido con un selector alternativo
+            try:
+                if self.detecta_bloqueo():
+                    raise BlockDetected("Captcha o bloqueo detectado en Bumeran (fallback)")
+                return self._extract_fallback(timeout=max(2, timeout // 2))
+            except Exception:
+                return []
 
     def extraer_todos_los_puestos(self, timeout: int = 10, page_wait: float = 1.0) -> List[JobData]:
         return self.gather_paginated(
             extractor=lambda: self.extraer_puestos(timeout=timeout),
             navigator=self.navegar_a_pagina,
             page_wait=page_wait,
+            source_label="bumeran",
         )
 
     def navegar_a_pagina(self, numero: int) -> bool:
@@ -120,6 +129,49 @@ class BumeranScraper(BaseScraper):
             except Exception:
                 continue
         return payloads
+
+    def _extract_fallback(self, timeout: int) -> List[JobData]:
+        wait = WebDriverWait(self.driver, timeout)
+        # Buscar tarjetas comunes cuando el contenedor cambia de ID
+        wait.until(
+            lambda d: d.find_elements(By.CSS_SELECTOR, "a[href*='/empleos/']")
+        )
+        anchors = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/empleos/']")
+        payloads: List[JobData] = []
+        seen = set()
+        for anchor in anchors:
+            try:
+                href = anchor.get_attribute("href")
+                if not href or "/empleos/" not in href:
+                    continue
+                if any(token in href for token in ("busqueda-", "publicacion-menor", "relevantes=", "recientes=")):
+                    continue
+                if href in seen:
+                    continue
+                title = self._extract_title(anchor)
+                if not title:
+                    continue
+                company = self._extract_company(anchor)
+                payloads.append({"titulo": title, "url": href, "empresa": company})
+                seen.add(href)
+            except Exception:
+                continue
+        return payloads
+
+    def detecta_bloqueo(self) -> bool:
+        try:
+            source = (getattr(self.driver, "page_source", "") or "").lower()
+        except Exception:
+            return False
+        tokens = (
+            "captcha",
+            "no soy un robot",
+            "are you human",
+            "unusual traffic",
+            "cloudflare",
+            "access denied",
+        )
+        return any(token in source for token in tokens)
 
     def _extract_title(self, anchor) -> str:
         for tag in ("h1", "h2", "h3", "h4", "h5"):

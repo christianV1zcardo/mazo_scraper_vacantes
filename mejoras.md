@@ -1,1 +1,2 @@
 - Automatizacion de Outputs
+- Filtrar fuera Asesor?

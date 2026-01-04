@@ -71,6 +71,11 @@ class IndeedScraperTests(unittest.TestCase):
         preserved = self.scraper._normalize_job_url(sponsor_url)
         self.assertEqual(preserved, "https://pe.indeed.com/pagead/clk?from=serp&ad=123")
 
+    def test_detecta_bloqueo_cloudflare_identifica_indicadores(self) -> None:
+        self.driver.page_source = "<html><title>Just a moment...</title>__cf_chl_tk=abc</html>"
+        self.driver.current_url = "https://pe.indeed.com/jobs?__cf_chl_jschl_tk__=token"
+        self.assertTrue(self.scraper.detecta_bloqueo_cloudflare())
+
 
 if __name__ == "__main__":
     unittest.main()

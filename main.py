@@ -11,6 +11,7 @@ if SRC_DIR not in sys.path:
     sys.path.insert(0, SRC_DIR)
 
 from src.pipeline import DEFAULT_SOURCES, run_combined
+from src.utils import copy_top_from_csv
 
 
 @dataclass
@@ -93,6 +94,11 @@ def parse_arguments() -> argparse.Namespace:
         action="store_false",
         help="Deshabilitar headless para depuración local",
     )
+    parser.add_argument(
+        "--copy-top",
+        dest="copy_top_from",
+        help="Ruta a un CSV top existente para copiar el resumen al portapapeles y salir",
+    )
     parser.set_defaults(headless=None)
     return parser.parse_args()
 
@@ -161,6 +167,23 @@ def _dedupe_preserving_order(values: List[str]) -> List[str]:
 
 def main() -> None:
     args = parse_arguments()
+    # Modo utilitario: copiar resumen desde un CSV ya generado
+    if args.copy_top_from:
+        level = parse_log_level(args.log_level)
+        configure_logging(level)
+        try:
+            summary = copy_top_from_csv(args.copy_top_from)
+            if summary:
+                print("Resumen copiado al portapapeles.\n")
+                print(summary)
+            else:
+                print("No se encontraron registros en el CSV proporcionado.")
+        except Exception as exc:
+            logger = logging.getLogger(__name__)
+            logger.exception("No se pudo copiar el resumen desde %s", args.copy_top_from)
+            sys.exit(1)
+        return
+
     params = resolve_parameters(args)
     if not params:
         return

@@ -6,7 +6,6 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode, urljoin, urlparse, urlunparse, parse_qs
 
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
 from .core.base import BaseScraper
@@ -19,8 +18,13 @@ class IndeedScraper(BaseScraper):
     SEARCH_PATH = "/jobs"
     EXPECTED_PAGE_SIZE = 15  # Indeed typically shows 15 cards per page
 
-    def __init__(self, driver=None, headless: Optional[bool] = True) -> None:
-        super().__init__(driver=driver, headless=headless)
+    def __init__(
+        self,
+        driver=None,
+        headless: Optional[bool] = True,
+        use_stealth: bool = True,
+    ) -> None:
+        super().__init__(driver=driver, headless=headless, use_stealth=use_stealth)
         self._search_params: Dict[str, str] = {}
         self._fromage: Optional[int] = None
         self._last_page_url: Optional[str] = None
@@ -74,7 +78,29 @@ class IndeedScraper(BaseScraper):
             extractor=lambda: self.extraer_puestos(timeout=timeout),
             navigator=self.navegar_a_pagina,
             page_wait=page_wait,
+            source_label="indeed",
+            low_yield_threshold=1,
+            low_yield_patience=3,
         )
+
+    def detecta_bloqueo_cloudflare(self) -> bool:
+        try:
+            source = (getattr(self.driver, "page_source", "") or "").lower()
+            current_url = getattr(self.driver, "current_url", "") or ""
+        except Exception:
+            return False
+        indicators = (
+            "__cf_chl",
+            "cf_chl_",
+            "just a moment",
+            "attention required",
+            "enable javascript and cookies",
+            "captcha",
+            "are you human",
+        )
+        if any(marker in source for marker in indicators):
+            return True
+        return "__cf_chl" in current_url
 
     def navegar_a_pagina(self, numero: int) -> bool:
         if numero < 1:
@@ -100,6 +126,9 @@ class IndeedScraper(BaseScraper):
         selectors = [
             "ul.jobsearch-ResultsList li",
             "div.job_seen_beacon",
+            "div.slider_item",
+            "div.cardOutline",
+            "td.resultContent",
         ]
         try:
             wait.until(
@@ -113,10 +142,23 @@ class IndeedScraper(BaseScraper):
         cards = self.driver.find_elements(By.CSS_SELECTOR, "ul.jobsearch-ResultsList li")
         if cards:
             return cards
-        return self.driver.find_elements(By.CSS_SELECTOR, "div.job_seen_beacon")
+        fallback_selectors = [
+            "div.job_seen_beacon",
+            "div.slider_item",
+            "div.cardOutline",
+            "td.resultContent",
+        ]
+        for selector in fallback_selectors:
+            cards = self.driver.find_elements(By.CSS_SELECTOR, selector)
+            if cards:
+                return cards
+        return []
 
     def _find_anchor(self, card):
-        anchors = card.find_elements(By.CSS_SELECTOR, "a[data-jk], a.tapItem")
+        anchors = card.find_elements(
+            By.CSS_SELECTOR,
+            "a[data-testid='jobTitle'], a.jcs-JobTitle, a[data-jk], a.tapItem, a[id^='job_']",
+        )
         return anchors[0] if anchors else None
 
     def _extract_title(self, anchor, card) -> str:

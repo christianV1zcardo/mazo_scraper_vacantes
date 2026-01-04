@@ -10,7 +10,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
-from .core.base import BaseScraper
+from .core.base import BaseScraper, BlockDetected
 
 JobData = Dict[str, Any]
 
@@ -48,15 +48,23 @@ class ComputrabajoScraper(BaseScraper):
             pass
 
     def extraer_puestos(self, timeout: int = 10) -> List[JobData]:
-        primary_wait = WebDriverWait(self.driver, min(timeout, 3))
+        primary_wait = WebDriverWait(self.driver, min(timeout, 4))
         try:
+            if self.detecta_bloqueo():
+                raise BlockDetected("Captcha o bloqueo detectado en Computrabajo")
             container = primary_wait.until(
                 EC.presence_of_element_located((By.ID, "offersGridOfferContainer"))
             )
+            anchors = container.find_elements(By.CSS_SELECTOR, "article a.js-o-link.fc_base")
         except Exception:
-            fallback_wait = WebDriverWait(self.driver, min(timeout, 3))
-            container = fallback_wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "main")))
-        anchors = container.find_elements(By.CSS_SELECTOR, "article a.js-o-link.fc_base")
+            fallback_wait = WebDriverWait(self.driver, min(timeout, 4))
+            # Fallback más amplio: busca tarjetas de oferta directamente
+            fallback_wait.until(
+                lambda d: d.find_elements(By.CSS_SELECTOR, "article a.js-o-link, article a.fc_base")
+            )
+            if self.detecta_bloqueo():
+                raise BlockDetected("Captcha o bloqueo detectado en Computrabajo (fallback)")
+            anchors = self.driver.find_elements(By.CSS_SELECTOR, "article a.js-o-link, article a.fc_base")
         base_url = self._build_base_search_url()
         payloads: List[JobData] = []
         seen = set()
@@ -79,6 +87,7 @@ class ComputrabajoScraper(BaseScraper):
             extractor=lambda: self.extraer_puestos(timeout=timeout),
             navigator=self.navegar_a_pagina,
             page_wait=page_wait,
+            source_label="computrabajo",
         )
 
     def navegar_a_pagina(self, numero: int) -> bool:
@@ -109,8 +118,21 @@ class ComputrabajoScraper(BaseScraper):
             url = f"{url}?pubdate={self.pubdate}"
         return url
 
-    def _build_detail_url(self, href: str, base_search: str) -> str:
-        tokens = re.findall(r"([A-Za-z0-9]{8,})", href)
+    def _build_detail_url(self, href: str, base_search: str) -> Optional[str]:
+        normalized = href or ""
+        fragment = normalized.split("#", 1)[1] if "#" in normalized else ""
+        base_candidate = normalized.split("#", 1)[0]
+        if base_candidate.startswith("/"):
+            base_candidate = f"{self.SITE_ROOT}{base_candidate}"
+
+        if fragment and re.match(r"^[A-Za-z0-9]{3,}$", fragment):
+            candidate_base = base_candidate or base_search
+            if self.pubdate and "/trabajo-de-" in candidate_base and "pubdate=" not in candidate_base:
+                separator = "&" if "?" in candidate_base else "?"
+                candidate_base = f"{candidate_base}{separator}pubdate={self.pubdate}"
+            return f"{candidate_base}#{fragment}"
+
+        tokens = re.findall(r"([A-Za-z0-9]{8,})", normalized)
         token = None
         for candidate in tokens:
             if re.search(r"\d", candidate):
@@ -120,9 +142,13 @@ class ComputrabajoScraper(BaseScraper):
             token = max(tokens, key=len)
         if token:
             return f"{base_search}#{token}"
-        if href.startswith("/"):
-            return f"{self.SITE_ROOT}{href}"
-        return href
+
+        # Skip anchors that are not job detail links
+        if "/trabajo-de-" not in normalized:
+            return None
+        if normalized.startswith("/"):
+            return f"{self.SITE_ROOT}{normalized}"
+        return normalized
 
     def _extract_company(self, anchor, title_text: str) -> str:
         # In Computrabajo, the company name is usually within the same article card.
@@ -156,3 +182,18 @@ class ComputrabajoScraper(BaseScraper):
                         continue
                     return txt.split("\n")[0]
         return ""
+
+    def detecta_bloqueo(self) -> bool:
+        try:
+            source = (getattr(self.driver, "page_source", "") or "").lower()
+        except Exception:
+            return False
+        tokens = (
+            "captcha",
+            "no soy un robot",
+            "are you human",
+            "unusual traffic",
+            "cloudflare",
+            "access denied",
+        )
+        return any(token in source for token in tokens)
