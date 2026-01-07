@@ -86,6 +86,7 @@ class GuardarResultadosTests(unittest.TestCase):
             {"fuente": "X", "titulo": "Analista duplicada", "empresa": "BCP", "url": "https://example.com/a"},
             {"fuente": "Y", "titulo": "Data", "empresa": "Startup", "url": "https://example.com/b"},
             {"fuente": "Z", "titulo": "Cientifico", "empresa": "Scotiabank Peru", "url": "https://example.com/c"},
+            {"fuente": "Z", "titulo": "Contador", "empresa": "caja arequipa", "url": "https://example.com/d"},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             with patch("src.utils.datetime") as mock_datetime, patch("src.utils.pyperclip.copy") as mock_copy:
@@ -100,13 +101,14 @@ class GuardarResultadosTests(unittest.TestCase):
             with open(json_path, "r", encoding="utf-8") as handle:
                 data = json.load(handle)
 
-            # Dedupe should drop the duplicate URL
-            self.assertEqual(len(data), 3)
+            # Dedupe should drop the duplicate URL (but keep non-top entries like caja)
+            self.assertEqual(len(data), 4)
             urls = {item["url"] for item in data}
             self.assertEqual(urls, {
                 "https://example.com/a",
                 "https://example.com/b",
                 "https://example.com/c",
+                "https://example.com/d",
             })
 
             # Top file should exist and include only whitelisted companies
@@ -124,23 +126,37 @@ class GuardarResultadosTests(unittest.TestCase):
             self.assertIn("🗣️ BCP", clipboard_text)
             self.assertIn("🗣️ SCOTIABANK PERU", clipboard_text)
             self.assertIn("↳ Analista", clipboard_text)
-            self.assertIn("✅ https://example.com/a", clipboard_text)
+            self.assertIn("✅ example.com/a", clipboard_text)
             self.assertIn("↳ Cientifico", clipboard_text)
-            self.assertIn("✅ https://example.com/c", clipboard_text)
+            self.assertIn("✅ example.com/c", clipboard_text)
+            self.assertNotIn("caja", clipboard_text.lower())
 
-    def test_copy_top_from_csv_reads_and_copies(self) -> None:
+    def test_copy_top_from_csv_reads_and_copies_grouping(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             csv_path = os.path.join(tmpdir, "top_demo.csv")
             with open(csv_path, "w", encoding="utf-8", newline="") as handle:
                 handle.write("fuente,empresa,titulo,url\n")
-                handle.write("A,Interbank,Analista,https://example.com/1\n")
-                handle.write("B,Startup,Junior,https://example.com/2\n")
+                handle.write("A,Falabella,Analista,https://example.com/1\n")
+                handle.write("B,FALEBELLA,Senior,https://example.com/3\n")
+                handle.write("C,FALEBELLA,Lead,//www.bumeran.com.pe/empleos/dev-123\n")
+                handle.write("D,Startup,Junior,https://example.com/2\n")
             with patch("src.utils.pyperclip.copy") as mock_copy:
                 summary = copy_top_from_csv(csv_path)
             mock_copy.assert_called_once()
-            self.assertIn("🗣️ INTERBANK", summary)
+            self.assertIn("🗣️ FALEBELLA", summary)
             self.assertIn("Analista", summary)
-            self.assertNotIn("Startup", summary)  # no whitelist match, so only first row copied
+            self.assertIn("Senior", summary)
+            self.assertIn("https://www.bumeran.com.pe/empleos/dev-123", summary)
+            # grouped once despite different casing
+            self.assertEqual(summary.count("🗣️ FALEBELLA"), 1)
+            self.assertNotIn("Startup", summary)  # no whitelist match, so ignored
+
+    def test_shorten_url_for_bumeran_id(self) -> None:
+        from src.utils import _shorten_url_for_display
+
+        url = "https://www.bumeran.com.pe/empleos/analista-de-producto-seguros-vida-y-decesos-mapfre-peru-compania-de-seguros-y-reaseguros-1118085708.html"
+        shortened = _shorten_url_for_display(url)
+        self.assertEqual(shortened, "https://www.bumeran.com.pe/empleos/1118085708.html")
 
 
 if __name__ == "__main__":

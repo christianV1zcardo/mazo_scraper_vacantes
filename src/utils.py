@@ -6,6 +6,7 @@ import csv
 import json
 import logging
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, Iterable, List
 
@@ -221,27 +222,36 @@ def _filter_whitelist(records: List[JobRecord]) -> List[JobRecord]:
         empresa = (record.get("empresa") or "").lower()
         if not empresa:
             continue
+        # Ignorar cajas en general aunque coincidan con la whitelist
+        if "caja" in empresa:
+            continue
         if any(name in empresa for name in whitelist):
             filtered.append(record)
     return filtered
 
 
 def _build_top_summary(records: List[JobRecord]) -> str:
-    grouped: Dict[str, List[JobRecord]] = {}
+    grouped: Dict[str, Dict[str, Any]] = {}
     for record in records:
-        empresa = (record.get("empresa") or "").strip()
-        if not empresa:
+        empresa_raw = (record.get("empresa") or "").strip()
+        if not empresa_raw:
             continue
-        grouped.setdefault(empresa, []).append(record)
+        key = empresa_raw.lower()
+        entry = grouped.setdefault(key, {"label": empresa_raw, "items": []})
+        if not entry["label"]:
+            entry["label"] = empresa_raw
+        entry["items"].append(record)
     if not grouped:
         return ""
 
     lines: List[str] = []
-    for empresa, items in grouped.items():
-        lines.append(f"🗣️ {empresa.upper()}")
+    for data in grouped.values():
+        label = (data.get("label") or "").upper() or "EMPRESA"
+        items = data.get("items", [])
+        lines.append(f"🗣️ {label}")
         for item in items:
             titulo = (item.get("titulo") or "").strip() or "(Sin título)"
-            url = (item.get("url") or "").strip() or "(sin URL)"
+            url = _shorten_url_for_display((item.get("url") or "").strip())
             lines.append(f"↳ {titulo}")
             lines.append(f"  ✅ {url}")
         lines.append("")
@@ -260,6 +270,34 @@ def _copy_top_summary(records: List[JobRecord]) -> str:
     except Exception as exc:
         logger.warning("No se pudo copiar al portapapeles: %s", exc)
     return summary
+
+
+def _shorten_url_for_display(url: str) -> str:
+    if not url:
+        return "(sin URL)"
+    original = url
+    if url.startswith("//"):
+        url = url[2:]
+    if url.startswith("https://"):
+        url = url[len("https://") :]
+    elif url.startswith("http://"):
+        url = url[len("http://") :]
+    if url.startswith("www."):
+        url = url[len("www.") :]
+
+    # Acortado específico para Bumeran: usar solo el id numérico si está presente
+    if "bumeran.com" in url:
+        parts = url.split("/", 2)
+        if len(parts) >= 2:
+            path_rest = "/".join(parts[1:]) if len(parts) > 1 else parts[-1]
+            match = re.search(r"-(\d+)\.html", path_rest)
+            domain = parts[0]
+            domain = domain if domain.startswith("www.") else f"www.{domain}"
+            if match:
+                job_id = match.group(1)
+                return f"https://{domain}/empleos/{job_id}.html"
+            return f"https://{domain}/{path_rest}"
+    return url or original
 
 
 def copy_top_from_csv(path: str) -> str:
