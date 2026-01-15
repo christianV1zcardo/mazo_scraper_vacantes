@@ -55,9 +55,40 @@ python3 main.py "Data" --log-level debug --page-wait 0.5
 - `--no-headless` desactiva el modo headless para depuración local; `--headless` lo fuerza explícitamente (equivalente al valor por defecto).
 - `--log-level` controla la verbosidad (`debug`, `info`, `warning`, `error`, `critical`). Con `debug` verás deduplicación y tiempos por scraper.
 
-Salida: los archivos se guardan en `output/` con nombre `<fuente>_<query>_<YYYY-MM-DD>.(json|csv)`.
+### Salida de archivos
+
+Los archivos se guardan en `output/` con los siguientes formatos de nombre:
+
+- **Formato corto (individual)**: `DD_MM_<query>.csv`
+  - Ej: `14_01_analista.csv`, `14_01_practicante.csv`
+  - Archivo CSV con los resultados deduplicados del puesto buscado
+  
+- **Formato largo (original)**: `<fuente>_<query>_<YYYY-MM-DD>.(json|csv)`
+  - Ej: `combined_analista_2026-01-14.json`, `combined_analista_2026-01-14.csv`
+  - Archivos JSON y CSV con los resultados combinados de todas las fuentes
+
+- **Top companies**: `top_<query>_<YYYY-MM-DD>.csv`
+  - Ej: `top_analista_2026-01-14.csv`
+  - Contiene solo las empresas de la lista de "whitelist" (empresas prioritarias)
 
 Los CSV incluyen las columnas `fuente`, `empresa`, `titulo` y `url` (en ese orden). Cuando la empresa no se puede inferir se deja vacío, pero se mantiene el encabezado fijo para facilitar el post-procesamiento. Los JSON contienen los mismos campos.
+
+### Filtrado automático de puestos
+
+El scraper **elimina automáticamente** los puestos que coinciden con palabras clave o patrones específicos. El filtrado es basado en coincidencias de substrings (case-insensitive), lo que captura variaciones como "Asesor de Fidelización ATC", "Asesor Scotiabank", etc.
+
+**Palabras clave excluidas:**
+
+- **Asesor** (catch-all): Cualquier puesto con "asesor" es excluido, ya que en Computrabajo corresponde a roles de ventas/customer service
+- **Centro de llamadas**: "call center", "contact center", "telemarketing", "telefónico"
+- **Roles de ventas**: "consultor de ventas", "consultor comercial", "vendedor", "ejecutivo de ventas", "ejecutivo de cobranza", "ejecutivo comercial", "gestor de ventas", "promotor"
+- **Atención al cliente**: "atención al cliente", "customer service", "servicio al cliente"
+- **Roles de cobranza**: "cobrador", "gestor de cobranza", "cobrador de cartera"
+- **Servicios financieros**: "escuela de" (programas de formación para vendedores)
+- **Roles manuales**: "mozo", "almacén", "operario", "peón", "repartidor", "conductor", "mensajero", "limpieza"
+- **Otros**: "agente de seguros", "promotor inmobiliario"
+
+Esto se aplica automáticamente en todas las búsquedas. Para ver la lista completa o modificarla, edita `EXCLUDED_JOB_KEYWORDS` en [src/utils.py](src/utils.py).
 
 ### Logging y tiempos de espera
 

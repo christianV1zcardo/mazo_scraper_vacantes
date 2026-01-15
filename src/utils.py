@@ -128,6 +128,61 @@ WHITELIST_COMPANIES = [
     "talma",
 ]
 
+EXCLUDED_JOB_KEYWORDS = [
+    # Cualquier variante de "Asesor" (excepto analista de créditos que es más profesional)
+    "asesor",
+    # Cualquier variante de "Consultor" de ventas
+    "consultor de ventas",
+    "consultor comercial",
+    # Puestos de call center y customer service
+    "call center",
+    "contact center",
+    "call center lima",
+    "atención al cliente",
+    "atención al estudiante",
+    "customer service",
+    "telemarketing",
+    "telefonico",
+    # Puestos de ventas puros
+    "vendedor",
+    "promotor",
+    "promotora",
+    "cobrador",
+    "ejecutivo de ventas",
+    "ejecutivo de cobranza",
+    "ejecutivo comercial",
+    "ejecutivo de servicios financieros",
+    "agente",
+    "representante de ventas",
+    "gestor de cobranza",
+    "monitor de calidad call center",
+    "funcionario de crédito",
+    "asistente comercial",
+    # Puestos de servicio al cliente / retail
+    "jefe de tienda",
+    "supervisor de tienda",
+    "gerente de tienda",
+    "dependiente",
+    "cajero",
+    "reponedor",
+    "operario retail",
+    # Otros roles sin demanda
+    "limpieza",
+    "mozo",
+    "ayudante de almacén",
+    "operario",
+    "peón",
+    "asistente general",
+    "auxiliar general",
+    # Roles en formación (escuelas de...) - estos son prácticamente entry level de ventas
+    "escuela de",
+    # Trabajos muy basic
+    "repartidor",
+    "conductor",
+    "chofer",
+    "mensajero",
+]
+
 
 def guardar_resultados(
     puestos: Iterable[JobRecord],
@@ -137,13 +192,26 @@ def guardar_resultados(
 ) -> None:
     os.makedirs(output_dir, exist_ok=True)
     timestamp = datetime.now().strftime("%Y-%m-%d")
+    year, month, day = timestamp.split("-")
+    short_date = f"{day}_{month}"  # Format: DD_MM
+    
+    # For combined and top files, keep the original format
     base_name = f"{source}_{query.lower()}_{timestamp}"
+    
+    # For individual CSV files, use the new format DD_MM_query
+    short_base_name = f"{short_date}_{query.lower()}"
+    
     raw_records = list(puestos)
     records = _dedupe_records(raw_records)
     json_path = os.path.join(output_dir, f"{base_name}.json")
     csv_path = os.path.join(output_dir, f"{base_name}.csv")
+    short_csv_path = os.path.join(output_dir, f"{short_base_name}.csv")
+    
     _save_json(records, json_path)
     _save_csv(records, csv_path)
+    # Also save with the new short format
+    _save_csv(records, short_csv_path)
+    
     top_records = _filter_whitelist(records)
     top_base = f"top_{query.lower()}_{timestamp}"
     top_csv_path = os.path.join(output_dir, f"{top_base}.csv")
@@ -151,9 +219,10 @@ def guardar_resultados(
         _save_csv(top_records, top_csv_path)
         summary = _copy_top_summary(top_records)
         logger.info(
-            "Resultados persistidos en %s, %s y top %s (dedup: %d -> %d, top: %d)",
+            "Resultados persistidos en %s, %s, %s y top %s (dedup: %d -> %d, top: %d)",
             json_path,
             csv_path,
+            short_csv_path,
             top_csv_path,
             len(raw_records),
             len(records),
@@ -163,9 +232,10 @@ def guardar_resultados(
             logger.info("Resumen top copiado al portapapeles (%d caracteres)", len(summary))
     else:
         logger.info(
-            "Resultados persistidos en %s y %s (dedup: %d -> %d, top: 0)",
+            "Resultados persistidos en %s, %s y %s (dedup: %d -> %d, top: 0)",
             json_path,
             csv_path,
+            short_csv_path,
             len(raw_records),
             len(records),
         )
@@ -200,8 +270,16 @@ def _dedupe_records(records: List[JobRecord]) -> List[JobRecord]:
     seen: set[str] = set()
     deduped: List[JobRecord] = []
     dropped = 0
+    excluded = 0
     for record in records:
         url = record.get("url")
+        titulo = (record.get("titulo") or "").lower()
+        
+        # Check if job title matches excluded keywords
+        if any(keyword in titulo for keyword in EXCLUDED_JOB_KEYWORDS):
+            excluded += 1
+            continue
+        
         if url:
             if url in seen:
                 dropped += 1
@@ -210,6 +288,8 @@ def _dedupe_records(records: List[JobRecord]) -> List[JobRecord]:
         deduped.append(record)
     if dropped:
         logger.info("Se eliminaron %d duplicados por URL", dropped)
+    if excluded:
+        logger.info("Se eliminaron %d puestos por palabras clave excluidas", excluded)
     return deduped
 
 

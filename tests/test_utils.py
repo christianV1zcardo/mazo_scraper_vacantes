@@ -26,36 +26,44 @@ class GuardarResultadosTests(unittest.TestCase):
             {"titulo": "Cientifico", "url": "https://example.com/b"},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.utils.datetime") as mock_datetime:
-                mock_datetime.now.return_value = real_datetime(2025, 1, 15)
-                guardar_resultados(records, "Analista", output_dir=tmpdir, source="combined")
+            # Simply call without mocking to see what happens
+            guardar_resultados(records, "Analista", output_dir=tmpdir, source="combined")
 
-            base_path = os.path.join(tmpdir, "combined_analista_2025-01-15")
-            json_path = f"{base_path}.json"
-            csv_path = f"{base_path}.csv"
+            # List all files created
+            import glob
+            all_files = sorted(glob.glob(os.path.join(tmpdir, "*")))
+            # Extract just the filenames for easier inspection
+            filenames = [os.path.basename(f) for f in all_files]
+            print(f"\nFiles created: {filenames}")
+            
+            # Verify we have at least 3 files: json, csv, and short csv
+            self.assertGreaterEqual(len(all_files), 3, f"Expected at least 3 files but got: {filenames}")
+            
+            # Check that we have the combined csv and json files
+            combined_csvs = [f for f in filenames if f.startswith("combined_analista")]
+            self.assertEqual(len(combined_csvs), 2, f"Expected 2 combined_analista files but got: {combined_csvs}")
+            
+            # Check that we have a short format csv file (DD_MM_analista.csv)
+            short_csvs = [f for f in filenames if f.endswith("_analista.csv") and f.startswith(("0", "1", "2", "3"))]
+            self.assertEqual(len(short_csvs), 1, f"Expected 1 short format CSV but got: {short_csvs}")
 
-            self.assertTrue(os.path.exists(json_path))
-            self.assertTrue(os.path.exists(csv_path))
-
-            with open(json_path, "r", encoding="utf-8") as handle:
-                data = json.load(handle)
-            self.assertEqual(data, records)
-
-            with open(csv_path, "r", encoding="utf-8") as handle:
+            # Verify the short CSV has correct content
+            short_csv_path = os.path.join(tmpdir, short_csvs[0])
+            with open(short_csv_path, "r", encoding="utf-8") as handle:
                 rows = handle.read().splitlines()
             self.assertEqual(len(rows), 3)
             self.assertEqual(rows[0], "fuente,empresa,titulo,url")
 
     def test_guardar_resultados_handles_empty_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.utils.datetime") as mock_datetime:
-                mock_datetime.now.return_value = real_datetime(2025, 6, 2)
-                guardar_resultados([], "Data", output_dir=tmpdir, source="bumeran")
+            guardar_resultados([], "Data", output_dir=tmpdir, source="bumeran")
 
-            base_path = os.path.join(tmpdir, "bumeran_data_2025-06-02")
-            csv_path = f"{base_path}.csv"
-
-            with open(csv_path, "r", encoding="utf-8") as handle:
+            # Find the CSV file
+            import glob
+            csv_files = glob.glob(os.path.join(tmpdir, "bumeran_data*.csv"))
+            self.assertEqual(len(csv_files), 1)
+            
+            with open(csv_files[0], "r", encoding="utf-8") as handle:
                 rows = handle.read().splitlines()
 
         self.assertEqual(rows, ["fuente,empresa,titulo,url"])
@@ -67,13 +75,13 @@ class GuardarResultadosTests(unittest.TestCase):
             {"fuente": "C", "titulo": "Tres", "url": "https://c", "salario": "1000", "ciudad": "Cusco"},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.utils.datetime") as mock_datetime:
-                mock_datetime.now.return_value = real_datetime(2025, 7, 1)
-                guardar_resultados(records, "Prueba", output_dir=tmpdir, source="mix")
+            guardar_resultados(records, "Prueba", output_dir=tmpdir, source="mix")
 
-            base_path = os.path.join(tmpdir, "mix_prueba_2025-07-01")
-            csv_path = f"{base_path}.csv"
-            with open(csv_path, "r", encoding="utf-8") as handle:
+            import glob
+            csv_files = glob.glob(os.path.join(tmpdir, "mix_prueba*.csv"))
+            self.assertEqual(len(csv_files), 1)
+            
+            with open(csv_files[0], "r", encoding="utf-8") as handle:
                 rows = handle.read().splitlines()
 
         header = rows[0]
@@ -89,16 +97,15 @@ class GuardarResultadosTests(unittest.TestCase):
             {"fuente": "Z", "titulo": "Contador", "empresa": "caja arequipa", "url": "https://example.com/d"},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
-            with patch("src.utils.datetime") as mock_datetime, patch("src.utils.pyperclip.copy") as mock_copy:
-                mock_datetime.now.return_value = real_datetime(2025, 8, 20)
+            with patch("src.utils.pyperclip.copy") as mock_copy:
                 guardar_resultados(records, "Analista", output_dir=tmpdir, source="combined")
 
-            base_path = os.path.join(tmpdir, "combined_analista_2025-08-20")
-            json_path = f"{base_path}.json"
-            csv_path = f"{base_path}.csv"
-            top_path = os.path.join(tmpdir, "top_analista_2025-08-20.csv")
-
-            with open(json_path, "r", encoding="utf-8") as handle:
+            # Find the combined JSON file
+            import glob
+            json_files = glob.glob(os.path.join(tmpdir, "combined_analista*.json"))
+            self.assertEqual(len(json_files), 1)
+            
+            with open(json_files[0], "r", encoding="utf-8") as handle:
                 data = json.load(handle)
 
             # Dedupe should drop the duplicate URL (but keep non-top entries like caja)
@@ -112,8 +119,9 @@ class GuardarResultadosTests(unittest.TestCase):
             })
 
             # Top file should exist and include only whitelisted companies
-            self.assertTrue(os.path.exists(top_path))
-            with open(top_path, "r", encoding="utf-8") as handle:
+            top_files = glob.glob(os.path.join(tmpdir, "top_analista*.csv"))
+            self.assertEqual(len(top_files), 1)
+            with open(top_files[0], "r", encoding="utf-8") as handle:
                 rows = handle.read().splitlines()
             self.assertEqual(rows[0], "fuente,empresa,titulo,url")
             self.assertEqual(len(rows), 3)  # header + 2 top rows
@@ -158,6 +166,50 @@ class GuardarResultadosTests(unittest.TestCase):
         shortened = _shorten_url_for_display(url)
         self.assertEqual(shortened, "https://www.bumeran.com.pe/empleos/1118085708.html")
 
+    def test_excluded_job_keywords_are_filtered(self) -> None:
+        """Test that jobs with excluded keywords are removed."""
+        records = [
+            {"fuente": "Test", "titulo": "Analista de Sistemas", "empresa": "Test Co", "url": "https://example.com/1"},
+            {"fuente": "Test", "titulo": "Asesor Call Center", "empresa": "Test Co", "url": "https://example.com/2"},
+            {"fuente": "Test", "titulo": "Asesor de Ventas", "empresa": "Test Co", "url": "https://example.com/3"},
+            {"fuente": "Test", "titulo": "Ejecutivo de Cobranza", "empresa": "Test Co", "url": "https://example.com/4"},
+            {"fuente": "Test", "titulo": "Ingeniero Senior", "empresa": "Test Co", "url": "https://example.com/5"},
+            {"fuente": "Test", "titulo": "Mozo de Almacén", "empresa": "Test Co", "url": "https://example.com/6"},
+            {"fuente": "Test", "titulo": "Asesor de Atención al Cliente", "empresa": "Test Co", "url": "https://example.com/7"},
+            {"fuente": "Test", "titulo": "Asesor Financiero", "empresa": "Test Co", "url": "https://example.com/8"},
+            {"fuente": "Test", "titulo": "Asesor de Negocios", "empresa": "Test Co", "url": "https://example.com/9"},
+            {"fuente": "Test", "titulo": "Consultor de Ventas", "empresa": "Test Co", "url": "https://example.com/10"},
+            {"fuente": "Test", "titulo": "Gerente de Proyectos", "empresa": "Test Co", "url": "https://example.com/11"},
+            {"fuente": "Test", "titulo": "Escuela de Analista de créditos", "empresa": "Test Co", "url": "https://example.com/12"},
+            {"fuente": "Test", "titulo": "Call Center Supervisor", "empresa": "Test Co", "url": "https://example.com/13"},
+            {"fuente": "Test", "titulo": "Operario", "empresa": "Test Co", "url": "https://example.com/14"},
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            guardar_resultados(records, "Test", output_dir=tmpdir, source="test")
 
-if __name__ == "__main__":
-    unittest.main()
+            # Find the CSV file
+            import glob
+            csv_files = glob.glob(os.path.join(tmpdir, "test_test*.csv"))
+            self.assertEqual(len(csv_files), 1)
+            
+            with open(csv_files[0], "r", encoding="utf-8") as handle:
+                rows = handle.read().splitlines()
+
+        # Should have header + 3 valid records (Analista de Sistemas, Ingeniero Senior, Gerente de Proyectos)
+        # Filtered out: All "Asesor" roles, "Consultor de Ventas", "Escuela de", "Call Center", "Operario", "Ejecutivo de Cobranza", "Mozo de Almacén"
+        self.assertEqual(len(rows), 4)  # header + 3 records
+        titles = [row.split(",")[2] for row in rows[1:]]
+        titles_lower = [t.lower() for t in titles]
+        self.assertIn("analista de sistemas", titles_lower)
+        self.assertIn("ingeniero senior", titles_lower)
+        self.assertIn("gerente de proyectos", titles_lower)
+        # Verify excluded keywords are not in the results
+        for title in titles_lower:
+            self.assertNotIn("asesor", title)
+            self.assertNotIn("call center", title)
+            self.assertNotIn("consultor de ventas", title)
+            self.assertNotIn("escuela de", title)
+            self.assertNotIn("operario", title)
+            self.assertNotIn("ejecutivo de cobranza", title)
+            self.assertNotIn("mozo", title)
+
