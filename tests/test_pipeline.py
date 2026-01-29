@@ -243,6 +243,91 @@ class PipelineTests(unittest.TestCase):
         self.assertEqual(len(combined), 1)
         self.assertEqual(combined[0]["url"], "https://jobs.com/viewjob?jk=123")
 
+    def test_collect_jobs_deduplicates_across_all_sources_including_laborum(self) -> None:
+        """Verifica que la deduplicación funciona entre TODAS las fuentes incluyendo Laborum."""
+        bumeran = Mock()
+        bumeran.close = Mock()
+        computrabajo = Mock()
+        computrabajo.close = Mock()
+        laborum = Mock()
+        laborum.close = Mock()
+        indeed = Mock()
+        indeed.close = Mock()
+
+        def bumeran_factory(headless=None):
+            return bumeran
+
+        def computrabajo_factory(headless=None):
+            return computrabajo
+
+        def laborum_factory(headless=None):
+            return laborum
+
+        def indeed_factory(headless=None):
+            return indeed
+
+        # Simular que cada fuente devuelve una URL común y una única
+        def bumeran_collector(_s, *_a, **_k):
+            return [
+                {"fuente": "Bumeran", "url": "https://jobs.com/shared1", "titulo": "Job1", "empresa": "C1"},
+                {"fuente": "Bumeran", "url": "https://jobs.com/bumeran-only", "titulo": "BumeranJob", "empresa": "C1"},
+            ]
+
+        def computrabajo_collector(_s, *_a, **_k):
+            return [
+                {"fuente": "Computrabajo", "url": "https://jobs.com/shared1", "titulo": "Job1", "empresa": "C1"},  # dup
+                {"fuente": "Computrabajo", "url": "https://jobs.com/shared2", "titulo": "Job2", "empresa": "C2"},
+            ]
+
+        def laborum_collector(_s, *_a, **_k):
+            return [
+                {"fuente": "Laborum", "url": "https://jobs.com/shared2", "titulo": "Job2", "empresa": "C2"},  # dup
+                {"fuente": "Laborum", "url": "https://jobs.com/laborum-only", "titulo": "LaborumJob", "empresa": "C3"},
+            ]
+
+        def indeed_collector(_s, *_a, **_k):
+            return [
+                {"fuente": "Indeed", "url": "https://jobs.com/laborum-only", "titulo": "LaborumJob", "empresa": "C3"},  # dup
+                {"fuente": "Indeed", "url": "https://jobs.com/indeed-only", "titulo": "IndeedJob", "empresa": "C4"},
+            ]
+
+        with patch.dict(
+            "src.pipeline.SCRAPER_REGISTRY",
+            {
+                "bumeran": (bumeran_factory, bumeran_collector, False, False),
+                "computrabajo": (computrabajo_factory, computrabajo_collector, False, False),
+                "laborum": (laborum_factory, laborum_collector, False, False),
+                "indeed": (indeed_factory, indeed_collector, False, True),  # serial
+            },
+            clear=True,
+        ):
+            combined, executed = pipeline.collect_jobs(
+                busqueda="Test",
+                dias=0,
+                initial_wait=0,
+                page_wait=0,
+                sources=["bumeran", "computrabajo", "laborum", "indeed"],
+            )
+
+        # Debe haber 5 URLs únicas en total (shared1, shared2, bumeran-only, laborum-only, indeed-only)
+        urls = {r["url"] for r in combined}
+        self.assertEqual(len(urls), 5)
+        self.assertIn("https://jobs.com/shared1", urls)
+        self.assertIn("https://jobs.com/shared2", urls)
+        self.assertIn("https://jobs.com/bumeran-only", urls)
+        self.assertIn("https://jobs.com/laborum-only", urls)
+        self.assertIn("https://jobs.com/indeed-only", urls)
+
+    def test_normalize_sources_handles_all_keyword(self) -> None:
+        """Verifica que 'all' expande a todas las fuentes."""
+        result = pipeline._normalize_sources(["all"])
+        self.assertEqual(result, list(pipeline.DEFAULT_SOURCES))
+
+    def test_normalize_sources_removes_duplicates(self) -> None:
+        """Verifica que duplicados se eliminan preservando orden."""
+        result = pipeline._normalize_sources(["bumeran", "indeed", "bumeran"])
+        self.assertEqual(result, ["bumeran", "indeed"])
+
 
 if __name__ == "__main__":
     unittest.main()

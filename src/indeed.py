@@ -9,6 +9,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 
 from .core.base import BaseScraper
+from .core.browser import create_firefox_driver
 
 JobData = Dict[str, Any]
 
@@ -24,7 +25,10 @@ class IndeedScraper(BaseScraper):
         headless: Optional[bool] = True,
         use_stealth: bool = True,
     ) -> None:
-        super().__init__(driver=driver, headless=headless, use_stealth=use_stealth)
+        # Use Firefox instead of Chrome to avoid ChromeDriver version mismatches
+        if driver is None:
+            driver = create_firefox_driver(headless=headless)
+        super().__init__(driver=driver, headless=headless, use_stealth=False)
         self._search_params: Dict[str, str] = {}
         self._fromage: Optional[int] = None
         self._last_page_url: Optional[str] = None

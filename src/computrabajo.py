@@ -7,8 +7,6 @@ import time
 from typing import Any, Dict, List, Optional
 
 from selenium.webdriver.common.by import By
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 
 from .core.base import BaseScraper, BlockDetected
 
@@ -48,45 +46,90 @@ class ComputrabajoScraper(BaseScraper):
             pass
 
     def extraer_puestos(self, timeout: int = 10) -> List[JobData]:
-        primary_wait = WebDriverWait(self.driver, min(timeout, 4))
+        """Extrae puestos usando JavaScript para máxima velocidad."""
         try:
             if self.detecta_bloqueo():
                 raise BlockDetected("Captcha o bloqueo detectado en Computrabajo")
-            container = primary_wait.until(
-                EC.presence_of_element_located((By.ID, "offersGridOfferContainer"))
-            )
-            anchors = container.find_elements(By.CSS_SELECTOR, "article a.js-o-link.fc_base")
+            
+            # Extraer todos los datos con JavaScript (mucho más rápido)
+            raw_jobs = self.driver.execute_script('''
+                const articles = document.querySelectorAll('article[data-id]');
+                if (!articles.length) return [];
+                
+                return Array.from(articles).map(article => {
+                    // El título está en h2 > a.js-o-link
+                    const titleLink = article.querySelector('h2 a.js-o-link');
+                    if (!titleLink) return null;
+                    
+                    const href = titleLink.getAttribute('href') || '';
+                    const titulo = (titleLink.textContent || '').trim();
+                    
+                    // La URL debe contener /ofertas-de-trabajo/ para ser válida
+                    if (!href.includes('/ofertas-de-trabajo/')) return null;
+                    
+                    // Empresa: buscar en p.dFlex o a.fc_base.t_ellipsis (no el del título)
+                    let empresa = '';
+                    
+                    // Primero buscar el link de la empresa
+                    const companyLink = article.querySelector('p.dFlex a.fc_base.t_ellipsis');
+                    if (companyLink) {
+                        empresa = (companyLink.textContent || '').trim();
+                    }
+                    
+                    // Si no hay link, buscar en el párrafo dFlex
+                    if (!empresa) {
+                        const companyP = article.querySelector('p.dFlex.vm_fx.fs16.fc_base');
+                        if (companyP) {
+                            // Obtener solo el texto directo, no de spans internos
+                            const txt = (companyP.textContent || '').trim();
+                            // Limpiar rating y texto extra
+                            const cleanTxt = txt.replace(/[\\d,]+\\s*★?/g, '').trim();
+                            if (cleanTxt && !cleanTxt.includes('Importante empresa')) {
+                                empresa = cleanTxt.split('\\n')[0].trim();
+                            }
+                        }
+                    }
+                    
+                    return { href, titulo, empresa };
+                }).filter(j => j && j.titulo && j.href);
+            ''')
+            
+            if not raw_jobs:
+                return []
+            
+            payloads: List[JobData] = []
+            seen = set()
+            for job in raw_jobs:
+                href = job.get("href", "")
+                # Construir URL completa
+                if href.startswith("/"):
+                    detail_url = f"{self.SITE_ROOT}{href.split('#')[0]}"
+                else:
+                    detail_url = href.split('#')[0]
+                
+                if not detail_url or detail_url in seen:
+                    continue
+                seen.add(detail_url)
+                payloads.append({
+                    "titulo": job.get("titulo", ""),
+                    "url": detail_url,
+                    "empresa": job.get("empresa", ""),
+                })
+            
+            return payloads
+            
+        except BlockDetected:
+            raise
         except Exception:
-            fallback_wait = WebDriverWait(self.driver, min(timeout, 4))
-            # Fallback más amplio: busca tarjetas de oferta directamente
-            fallback_wait.until(
-                lambda d: d.find_elements(By.CSS_SELECTOR, "article a.js-o-link, article a.fc_base")
-            )
-            if self.detecta_bloqueo():
-                raise BlockDetected("Captcha o bloqueo detectado en Computrabajo (fallback)")
-            anchors = self.driver.find_elements(By.CSS_SELECTOR, "article a.js-o-link, article a.fc_base")
-        base_url = self._build_base_search_url()
-        payloads: List[JobData] = []
-        seen = set()
-        for anchor in anchors:
-            href = anchor.get_attribute("href") or ""
-            text = (anchor.text or "").strip()
-            if not href or not text:
-                continue
-            detail_url = self._build_detail_url(href, base_url)
-            if not detail_url or detail_url in seen:
-                continue
-            title_text = text.split("\n")[0]
-            company = self._extract_company(anchor, title_text)
-            payloads.append({"titulo": title_text, "url": detail_url, "empresa": company})
-            seen.add(detail_url)
-        return payloads
+            return []
 
     def extraer_todos_los_puestos(self, timeout: int = 10, page_wait: float = 1.0) -> List[JobData]:
+        # Usar page_wait reducido para mayor velocidad
+        effective_wait = min(page_wait, 0.5)
         return self.gather_paginated(
             extractor=lambda: self.extraer_puestos(timeout=timeout),
             navigator=self.navegar_a_pagina,
-            page_wait=page_wait,
+            page_wait=effective_wait,
             source_label="computrabajo",
         )
 
@@ -101,12 +144,13 @@ class ComputrabajoScraper(BaseScraper):
             if self._last_page_url and target == self._last_page_url:
                 return False
             self.driver.get(target)
+            # Esperar mínimo para que cargue la página
+            time.sleep(0.15)
             new_url = getattr(self.driver, "current_url", target)
             # Si la URL no cambia, asumimos que no hay más páginas
             if self._last_page_url and new_url == self._last_page_url:
                 return False
             self._last_page_url = new_url
-            time.sleep(0.2)
             return True
         except Exception:
             return False

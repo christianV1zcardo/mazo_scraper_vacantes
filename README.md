@@ -1,13 +1,20 @@
 
 # orem_scraper_vacantes
 
-Scraper de vacantes laborales para Bumeran, Computrabajo e Indeed, con arquitectura modular, pruebas unitarias y salida en CSV/JSON.
+Scraper de vacantes laborales para Bumeran, Computrabajo, Indeed y Laborum, con arquitectura modular, ejecución paralela, y salida en CSV.
+
+## ⚡ Características
+
+- **Ejecución paralela**: Los 4 scrapers se ejecutan simultáneamente (~45 segundos en total)
+- **Extracción optimizada con JavaScript**: Máxima velocidad de extracción
+- **Deduplicación automática**: Elimina duplicados entre todas las fuentes
+- **Filtrado inteligente**: Excluye automáticamente puestos no deseados (ventas, call center, etc.)
+- **CSV limpio**: 4 columnas: Fuente, Empresa, Titulo, Url
 
 ## Requisitos
 
 - Python 3.10+
 - Firefox y geckodriver en PATH (para Selenium)
-- Google Chrome (Indeed usa un driver stealth basado en Chrome)
 - Dependencias Python: selenium, pandas
 
 macOS (Homebrew):
@@ -39,7 +46,7 @@ Modo interactivo:
 python3 main.py
 ```
 
-El asistente pregunta por la búsqueda, filtro de días y plataformas (Bumeran, Computrabajo, Indeed o `all`).
+El asistente pregunta por la búsqueda, filtro de días y plataformas (Bumeran, Computrabajo, Indeed, Laborum o `all`).
 
 Modo por argumentos (ejemplos):
 
@@ -48,6 +55,7 @@ python3 main.py "Analista de datos" --dias 1
 python3 main.py "Analista" --dias 2 --initial-wait 2 --page-wait 1
 python3 main.py "Desarrollador" --source indeed
 python3 main.py "Fullstack" --source bumeran --source computrabajo
+python3 main.py "Data" --source laborum --log-level debug
 python3 main.py "Data" --log-level debug --page-wait 0.5
 ```
 
@@ -59,19 +67,25 @@ python3 main.py "Data" --log-level debug --page-wait 0.5
 
 Los archivos se guardan en `output/` con los siguientes formatos de nombre:
 
-- **Formato corto (individual)**: `DD_MM_<query>.csv`
-  - Ej: `14_01_analista.csv`, `14_01_practicante.csv`
+- **Resultados principales**: `DD_MM_<query>.csv`
+  - Ej: `29_01_analista.csv`, `29_01_practicante.csv`
   - Archivo CSV con los resultados deduplicados del puesto buscado
-  
-- **Formato largo (original)**: `<fuente>_<query>_<YYYY-MM-DD>.(json|csv)`
-  - Ej: `combined_analista_2026-01-14.json`, `combined_analista_2026-01-14.csv`
-  - Archivos JSON y CSV con los resultados combinados de todas las fuentes
 
 - **Top companies**: `top_<query>_<YYYY-MM-DD>.csv`
-  - Ej: `top_analista_2026-01-14.csv`
+  - Ej: `top_analista_2026-01-29.csv`
   - Contiene solo las empresas de la lista de "whitelist" (empresas prioritarias)
 
-Los CSV incluyen las columnas `fuente`, `empresa`, `titulo` y `url` (en ese orden). Cuando la empresa no se puede inferir se deja vacío, pero se mantiene el encabezado fijo para facilitar el post-procesamiento. Los JSON contienen los mismos campos.
+Los CSV incluyen las columnas `Fuente`, `Empresa`, `Titulo` y `Url` (en ese orden, con primera letra en mayúscula). Cuando la empresa no se puede inferir se deja vacío, pero se mantiene el encabezado fijo para facilitar el post-procesamiento.
+
+### Rendimiento
+
+| Fuente | Tiempo aproximado | Notas |
+|--------|-------------------|-------|
+| Bumeran | ~8s | Extracción JS, 2-3 páginas |
+| Computrabajo | ~35s | Extracción JS, ~33 páginas |
+| Indeed | ~10s | Extracción JS, 1-2 páginas |
+| Laborum | ~40s | Scroll infinito, ~70 scrolls |
+| **Total (paralelo)** | **~45s** | Todos ejecutándose simultáneamente |
 
 ### Filtrado automático de puestos
 
@@ -98,29 +112,50 @@ Esto se aplica automáticamente en todas las búsquedas. Para ver la lista compl
 
 ## Estructura del proyecto
 
-- `src/core/`: Infraestructura compartida
-  - `base.py`: Clase base para scrapers (gestión de paginación, cierre)
-  - `browser.py`: Factoría de WebDriver (Firefox) con soporte para `SCRAPER_HEADLESS`
-- `src/bumeran.py`: Scraper de Bumeran (hereda de `BaseScraper`)
-- `src/computrabajo.py`: Scraper de Computrabajo (hereda de `BaseScraper`)
-- `src/indeed.py`: Scraper de Indeed (hereda de `BaseScraper`)
-- `src/pipeline.py`: Orquestación para ejecutar los scrapers y combinar resultados
-- `src/utils.py`: Guardado de resultados a JSON/CSV
-- `main.py`: CLI que delega en `pipeline.run_combined`
+```
+src/
+├── core/
+│   ├── base.py      # Clase base con paginación y gestión de driver
+│   └── browser.py   # Factoría de WebDriver con timeouts optimizados
+├── bumeran.py       # Scraper de Bumeran (extracción JS)
+├── computrabajo.py  # Scraper de Computrabajo (extracción JS)
+├── indeed.py        # Scraper de Indeed (extracción JS)
+├── laborum.py       # Scraper de Laborum (scroll infinito + JS)
+├── pipeline.py      # Orquestación paralela con ThreadPoolExecutor
+└── utils.py         # Guardado CSV, filtrado y deduplicación
+
+tests/
+├── fixtures/        # HTML de ejemplo para tests
+└── test_*.py        # 62 tests unitarios
+
+main.py              # CLI principal
+```
+
+### Arquitectura
+
+- **BaseScraper**: Clase base que maneja paginación, reintentos y cierre de driver
+- **Extracción JS**: Todos los scrapers usan `driver.execute_script()` para extraer datos en una sola llamada, evitando múltiples `find_elements`
+- **Pipeline paralelo**: `ThreadPoolExecutor` ejecuta los 4 scrapers simultáneamente
+- **Deduplicación global**: Las URLs se normalizan y deduplicación entre todas las fuentes
 
 ## Pruebas
 
-El proyecto incluye pruebas unitarias con `unittest`. Durante las pruebas se stubbea Selenium para no requerir el navegador real.
+El proyecto incluye 62 pruebas unitarias con `unittest`. Durante las pruebas se stubbea Selenium para no requerir el navegador real.
 
 Ejecuta las pruebas:
 
 ```bash
+poetry run python -m pytest tests/ -v
+# o con unittest
 python3 -m unittest discover tests
 ```
+
+## Changelog
+
+Ver [CHANGELOG.md](CHANGELOG.md) para el historial completo de cambios.
 
 ## Notas
 
 - El modo headless viene activado por defecto; usa `--no-headless` o `SCRAPER_HEADLESS=0` cuando necesites abrir la ventana del navegador.
 - Ejecuta con `--log-level debug` para ver mensajes adicionales de deduplicación, esperas y liberación de recursos.
 - Si necesitas bloquear versiones exactas, genera un lock con tu herramienta preferida (Poetry o pip-tools). Este repo incluye `requirements.txt` para instalaciones simples con pip.
-- El driver stealth de Indeed rota user-agent, idioma y tamaño de ventana para reducir bloqueos. Si quieres desactivarlo, utiliza `SCRAPER_RANDOMIZE_FP=0`.

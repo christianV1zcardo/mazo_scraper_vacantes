@@ -35,7 +35,7 @@ def prompt_interactive() -> Optional[RunParameters]:
         dias = dias or "0"
         if dias in {"0", "1", "2", "3"}:
             raw_sources = input(
-                "Plataformas a ejecutar (bumeran, computrabajo, indeed, all) [all]: "
+                "Plataformas a ejecutar (bumeran, computrabajo, indeed, laborum, all) [all]: "
             ).strip()
             sources = parse_sources_input(raw_sources)
             return RunParameters(
@@ -52,7 +52,7 @@ def prompt_interactive() -> Optional[RunParameters]:
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Ejecuta los scrapers de Bumeran, Computrabajo e Indeed y guarda resultados"
+        description="Ejecuta los scrapers de Bumeran, Computrabajo, Indeed y Laborum y guarda resultados"
     )
     parser.add_argument(
         "busqueda",
@@ -73,7 +73,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--source",
         action="append",
-        choices=["bumeran", "computrabajo", "indeed", "all"],
+        choices=["bumeran", "computrabajo", "indeed", "laborum", "all"],
         help="Selecciona plataformas a ejecutar (usa varias veces para múltiples)",
     )
     parser.add_argument(

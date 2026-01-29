@@ -61,6 +61,8 @@ class BaseScraper:
         seen: set[str] = set()
         page = 1
         low_yield_streak = 0
+        consecutive_errors = 0
+        max_consecutive_errors = 3
         label = (source_label or getattr(self, "source_label", self.__class__.__name__)).lower()
         prefix = f"[{label}] " if label else ""
         logger.info("%sPaginación iniciada (max_pages=%s, page_wait=%.2fs)", prefix, self.max_pages, page_wait)
@@ -76,11 +78,19 @@ class BaseScraper:
                     time.sleep(page_wait)
             try:
                 current = extractor()
+                consecutive_errors = 0  # Reset error counter on success
             except BlockDetected:
                 raise
-            except Exception as exc:  # Treat extractor failures as end of pagination
-                logger.warning("%sPaginación detenida por error en página %d: %s", prefix, page, exc)
-                break
+            except Exception as exc:
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    logger.warning("%sPaginación detenida tras %d errores consecutivos en página %d: %s", 
+                                 prefix, consecutive_errors, page, exc)
+                    break
+                logger.debug("%sError en página %d (intento %d/%d): %s", 
+                           prefix, page, consecutive_errors, max_consecutive_errors, exc)
+                page += 1
+                continue
             new_found = 0
             for payload in current:
                 url = payload.get("url")

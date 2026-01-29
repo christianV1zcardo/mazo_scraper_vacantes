@@ -1,4 +1,3 @@
-import json
 import os
 import sys
 import tempfile
@@ -26,25 +25,18 @@ class GuardarResultadosTests(unittest.TestCase):
             {"titulo": "Cientifico", "url": "https://example.com/b"},
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
-            # Simply call without mocking to see what happens
             guardar_resultados(records, "Analista", output_dir=tmpdir, source="combined")
 
-            # List all files created
             import glob
             all_files = sorted(glob.glob(os.path.join(tmpdir, "*")))
-            # Extract just the filenames for easier inspection
             filenames = [os.path.basename(f) for f in all_files]
             print(f"\nFiles created: {filenames}")
             
-            # Verify we have at least 3 files: json, csv, and short csv
-            self.assertGreaterEqual(len(all_files), 3, f"Expected at least 3 files but got: {filenames}")
+            # Solo se crea el CSV con formato corto DD_MM_query.csv (sin combined ni JSON)
+            self.assertEqual(len(all_files), 1, f"Expected 1 file but got: {filenames}")
             
-            # Check that we have the combined csv and json files
-            combined_csvs = [f for f in filenames if f.startswith("combined_analista")]
-            self.assertEqual(len(combined_csvs), 2, f"Expected 2 combined_analista files but got: {combined_csvs}")
-            
-            # Check that we have a short format csv file (DD_MM_analista.csv)
-            short_csvs = [f for f in filenames if f.endswith("_analista.csv") and f.startswith(("0", "1", "2", "3"))]
+            # Verificar que el archivo tiene el formato corto correcto
+            short_csvs = [f for f in filenames if f.endswith("_analista.csv")]
             self.assertEqual(len(short_csvs), 1, f"Expected 1 short format CSV but got: {short_csvs}")
 
             # Verify the short CSV has correct content
@@ -52,21 +44,21 @@ class GuardarResultadosTests(unittest.TestCase):
             with open(short_csv_path, "r", encoding="utf-8") as handle:
                 rows = handle.read().splitlines()
             self.assertEqual(len(rows), 3)
-            self.assertEqual(rows[0], "fuente,empresa,titulo,url")
+            self.assertEqual(rows[0], "Fuente,Empresa,Titulo,Url")
 
     def test_guardar_resultados_handles_empty_records(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             guardar_resultados([], "Data", output_dir=tmpdir, source="bumeran")
 
-            # Find the CSV file
             import glob
-            csv_files = glob.glob(os.path.join(tmpdir, "bumeran_data*.csv"))
+            # Solo se crea el CSV con formato corto DD_MM_data.csv
+            csv_files = glob.glob(os.path.join(tmpdir, "*_data.csv"))
             self.assertEqual(len(csv_files), 1)
             
             with open(csv_files[0], "r", encoding="utf-8") as handle:
                 rows = handle.read().splitlines()
 
-        self.assertEqual(rows, ["fuente,empresa,titulo,url"])
+        self.assertEqual(rows, ["Fuente,Empresa,Titulo,Url"])
 
     def test_guardar_resultados_preserves_extra_fields_union(self) -> None:
         records = [
@@ -78,15 +70,16 @@ class GuardarResultadosTests(unittest.TestCase):
             guardar_resultados(records, "Prueba", output_dir=tmpdir, source="mix")
 
             import glob
-            csv_files = glob.glob(os.path.join(tmpdir, "mix_prueba*.csv"))
+            # Solo se crea el CSV con formato corto DD_MM_prueba.csv
+            csv_files = glob.glob(os.path.join(tmpdir, "*_prueba.csv"))
             self.assertEqual(len(csv_files), 1)
             
             with open(csv_files[0], "r", encoding="utf-8") as handle:
                 rows = handle.read().splitlines()
 
         header = rows[0]
-        # Extra fields should appear after base fields, preserving first-seen order
-        self.assertEqual(header, "fuente,empresa,titulo,url,ciudad,salario")
+        # Ahora solo 4 columnas fijas con headers capitalizados
+        self.assertEqual(header, "Fuente,Empresa,Titulo,Url")
 
     def test_guardar_resultados_dedup_and_top_csv_and_clipboard(self) -> None:
         records = [
@@ -100,17 +93,20 @@ class GuardarResultadosTests(unittest.TestCase):
             with patch("src.utils.pyperclip.copy") as mock_copy:
                 guardar_resultados(records, "Analista", output_dir=tmpdir, source="combined")
 
-            # Find the combined JSON file
             import glob
-            json_files = glob.glob(os.path.join(tmpdir, "combined_analista*.json"))
-            self.assertEqual(len(json_files), 1)
+            # Verificar que se creó el CSV con formato corto
+            csv_files = glob.glob(os.path.join(tmpdir, "*_analista.csv"))
+            self.assertEqual(len(csv_files), 1)
             
-            with open(json_files[0], "r", encoding="utf-8") as handle:
-                data = json.load(handle)
+            with open(csv_files[0], "r", encoding="utf-8") as handle:
+                import csv as csv_module
+                # Headers capitalizados
+                reader = csv_module.DictReader(handle)
+                data = list(reader)
 
             # Dedupe should drop the duplicate URL (but keep non-top entries like caja)
             self.assertEqual(len(data), 4)
-            urls = {item["url"] for item in data}
+            urls = {item["Url"] for item in data}
             self.assertEqual(urls, {
                 "https://example.com/a",
                 "https://example.com/b",
@@ -123,7 +119,7 @@ class GuardarResultadosTests(unittest.TestCase):
             self.assertEqual(len(top_files), 1)
             with open(top_files[0], "r", encoding="utf-8") as handle:
                 rows = handle.read().splitlines()
-            self.assertEqual(rows[0], "fuente,empresa,titulo,url")
+            self.assertEqual(rows[0], "Fuente,Empresa,Titulo,Url")  # Headers capitalizados
             self.assertEqual(len(rows), 3)  # header + 2 top rows
             top_empresas = {row.split(",")[1] for row in rows[1:]}
             self.assertEqual(top_empresas, {"BCP", "Scotiabank Peru"})
@@ -187,9 +183,9 @@ class GuardarResultadosTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             guardar_resultados(records, "Test", output_dir=tmpdir, source="test")
 
-            # Find the CSV file
             import glob
-            csv_files = glob.glob(os.path.join(tmpdir, "test_test*.csv"))
+            # Solo se crea el CSV con formato corto DD_MM_test.csv
+            csv_files = glob.glob(os.path.join(tmpdir, "*_test.csv"))
             self.assertEqual(len(csv_files), 1)
             
             with open(csv_files[0], "r", encoding="utf-8") as handle:

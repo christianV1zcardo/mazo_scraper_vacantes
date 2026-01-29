@@ -37,7 +37,15 @@ def create_firefox_driver(headless: Optional[bool] = None) -> webdriver.Firefox:
     options = Options()
     if _resolve_headless_flag(headless):
         options.add_argument("-headless")
-    return webdriver.Firefox(options=options)
+    driver = webdriver.Firefox(options=options)
+    # Reducir timeouts para evitar esperas largas (default es 300s)
+    if driver:
+        try:
+            driver.set_page_load_timeout(30)
+            driver.set_script_timeout(30)
+        except Exception:
+            pass  # Algunos mocks o drivers pueden no soportar esto
+    return driver
 
 
 def create_stealth_driver(headless: Optional[bool] = None) -> webdriver.Chrome:
@@ -61,7 +69,16 @@ def create_stealth_driver(headless: Optional[bool] = None) -> webdriver.Chrome:
     _maybe_randomize_fingerprint(options)
 
     # use_subprocess evita zombie processes con geckodriver/Chrome en macOS
-    return uc.Chrome(options=options, use_subprocess=True)
+    # version=None permite que undetected-chromedriver descargue la versión correcta
+    driver = uc.Chrome(options=options, use_subprocess=True, version=None)
+    # Reducir timeouts para evitar esperas largas (default es 300s)
+    if driver:
+        try:
+            driver.set_page_load_timeout(30)
+            driver.set_script_timeout(30)
+        except Exception:
+            pass  # Algunos mocks o drivers pueden no soportar esto
+    return driver
 
 
 def _ensure_distutils_available() -> None:

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import json
 import logging
 import os
 import re
@@ -195,21 +194,14 @@ def guardar_resultados(
     year, month, day = timestamp.split("-")
     short_date = f"{day}_{month}"  # Format: DD_MM
     
-    # For combined and top files, keep the original format
-    base_name = f"{source}_{query.lower()}_{timestamp}"
-    
-    # For individual CSV files, use the new format DD_MM_query
+    # Nombre corto para el CSV principal: DD_MM_query.csv
     short_base_name = f"{short_date}_{query.lower()}"
     
     raw_records = list(puestos)
     records = _dedupe_records(raw_records)
-    json_path = os.path.join(output_dir, f"{base_name}.json")
-    csv_path = os.path.join(output_dir, f"{base_name}.csv")
     short_csv_path = os.path.join(output_dir, f"{short_base_name}.csv")
     
-    _save_json(records, json_path)
-    _save_csv(records, csv_path)
-    # Also save with the new short format
+    # Solo guardar el CSV con formato corto (sin combined JSON/CSV)
     _save_csv(records, short_csv_path)
     
     top_records = _filter_whitelist(records)
@@ -219,9 +211,7 @@ def guardar_resultados(
         _save_csv(top_records, top_csv_path)
         summary = _copy_top_summary(top_records)
         logger.info(
-            "Resultados persistidos en %s, %s, %s y top %s (dedup: %d -> %d, top: %d)",
-            json_path,
-            csv_path,
+            "Resultados persistidos en %s y top %s (dedup: %d -> %d, top: %d)",
             short_csv_path,
             top_csv_path,
             len(raw_records),
@@ -232,37 +222,24 @@ def guardar_resultados(
             logger.info("Resumen top copiado al portapapeles (%d caracteres)", len(summary))
     else:
         logger.info(
-            "Resultados persistidos en %s, %s y %s (dedup: %d -> %d, top: 0)",
-            json_path,
-            csv_path,
+            "Resultados persistidos en %s (dedup: %d -> %d, top: 0)",
             short_csv_path,
             len(raw_records),
             len(records),
         )
 
 
-def _save_json(records: List[JobRecord], path: str) -> None:
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(records, handle, ensure_ascii=False, indent=2)
-    logger.info("Resultados guardados en JSON: %s", path)
-
-
 def _save_csv(records: List[JobRecord], path: str) -> None:
-    # Ensure fixed base order with the Empresa column between fuente and titulo
+    # Solo 4 columnas en orden fijo con headers capitalizados
     base_fields = ["fuente", "empresa", "titulo", "url"]
-    extra_fields: list[str] = []
-    seen_extra: set[str] = set()
-    for record in records:
-        for key in record.keys():
-            if key in base_fields or key in seen_extra:
-                continue
-            seen_extra.add(key)
-            extra_fields.append(key)
-    fieldnames = base_fields + extra_fields
+    header_names = ["Fuente", "Empresa", "Titulo", "Url"]
+    
     with open(path, "w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(records)
+        writer = csv.writer(handle)
+        writer.writerow(header_names)
+        for record in records:
+            row = [record.get(f, "") for f in base_fields]
+            writer.writerow(row)
     logger.info("Resultados guardados en CSV: %s", path)
 
 

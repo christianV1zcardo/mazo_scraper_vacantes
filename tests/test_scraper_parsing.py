@@ -101,32 +101,27 @@ class FakeDriver:
 
 class ScraperParsingTests(unittest.TestCase):
     def test_bumeran_extrae_puestos_con_fallback(self):
-        html = load_fixture("bumeran_sample.html")
-        # Parse fixture into simple elements
-        anchors = [
-            FakeElement(
-                href="https://www.bumeran.com.pe/empleos/dev-123",
-                tag_map={"h2": [FakeElement(text="Desarrollador Backend")]},
-                selector_map={"h3.sc-igZVbQ": [FakeElement(text="Empresa Uno")]},
-            ),
-            FakeElement(
-                href="https://www.bumeran.com.pe/empleos/dev-123",
-                tag_map={"h2": [FakeElement(text="Desarrollador Backend")]},
-                selector_map={"h3.sc-igZVbQ": [FakeElement(text="Empresa Uno")]},
-            ),
-            FakeElement(
-                href="https://www.bumeran.com.pe/empleos/otro-456",
-                tag_map={"h2": [FakeElement(text="Data Engineer")]},
-                selector_map={"h3.sc-ebDnpS": [FakeElement(text="Empresa Dos")]},
-            ),
-            FakeElement(href="https://www.bumeran.com.pe/empleos-busqueda-irrelevante"),
+        """Test que Bumeran extrae puestos correctamente usando JavaScript."""
+        # Mock del resultado que devolvería execute_script
+        js_result = [
+            {"href": "https://www.bumeran.com.pe/empleos/dev-123", "titulo": "Desarrollador Backend", "empresa": "Empresa Uno"},
+            {"href": "https://www.bumeran.com.pe/empleos/dev-123", "titulo": "Desarrollador Backend", "empresa": "Empresa Uno"},  # dup
+            {"href": "https://www.bumeran.com.pe/empleos/otro-456", "titulo": "Data Engineer", "empresa": "Empresa Dos"},
         ]
-        container = FakeContainer(anchors)
-        driver = FakeDriver(anchors)
-
+        
+        class FakeDriverJS:
+            page_source = "<html></html>"
+            current_url = "https://www.bumeran.com.pe/empleos-publicacion-hoy.html"
+            
+            def get(self, url):
+                self.current_url = url
+            
+            def execute_script(self, script):
+                return js_result
+        
+        driver = FakeDriverJS()
         scraper = BumeranScraper(driver=driver)
-        with patch("src.bumeran.WebDriverWait", lambda d, t: DummyWait(d, container)):
-            puestos = scraper.extraer_puestos(timeout=5)
+        puestos = scraper.extraer_puestos(timeout=5)
 
         self.assertEqual(len(puestos), 2)
         urls = {p["url"] for p in puestos}
@@ -134,42 +129,37 @@ class ScraperParsingTests(unittest.TestCase):
         self.assertIn("https://www.bumeran.com.pe/empleos/otro-456", urls)
 
     def test_computrabajo_extrae_y_normaliza(self):
-        anchors = [
-            FakeElement(
-                href="/trabajo-de-data-scientist#XYZ987",
-                text="Data Scientist\nLima",
-                xpath_map={
-                    "ancestor::article[1]": FakeElement(
-                        selector_map={"span.fs16.fc_base.mt5.fc_base.fc_base": [FakeElement(text="Tech Corp")]}
-                    )
-                },
-            ),
-            FakeElement(
-                href="/trabajo-de-data-engineer#XYZ988",
-                text="Data Engineer\nRemoto",
-                xpath_map={
-                    "ancestor::article[1]": FakeElement(
-                        selector_map={"span.fs16.fc_base.mt5.fc_base.fc_base": [FakeElement(text="DataWorks")]}
-                    )
-                },
-            ),
-            FakeElement(href="/otras-cosas", text="Ignorar"),
-            FakeElement(href="/trabajo-de-data-scientist#XYZ987"),  # duplicate URL to be skipped
+        """Test que computrabajo extrae puestos correctamente usando JavaScript."""
+        # Mock del resultado que devolvería execute_script
+        # Las URLs válidas deben contener /ofertas-de-trabajo/
+        js_result = [
+            {"href": "/ofertas-de-trabajo/oferta-de-trabajo-de-data-scientist-XYZ987", "titulo": "Data Scientist", "empresa": "Tech Corp"},
+            {"href": "/ofertas-de-trabajo/oferta-de-trabajo-de-data-engineer-XYZ988", "titulo": "Data Engineer", "empresa": "DataWorks"},
+            {"href": "/ofertas-de-trabajo/oferta-de-trabajo-de-data-scientist-XYZ987", "titulo": "Data Scientist", "empresa": "Tech Corp"},  # duplicado
         ]
-        container = FakeContainer(anchors)
-        driver = FakeDriver(anchors)
-
+        
+        class FakeDriverJS:
+            page_source = "<html></html>"
+            current_url = "https://pe.computrabajo.com/trabajo-de-data?pubdate=1"
+            
+            def get(self, url):
+                self.current_url = url
+            
+            def execute_script(self, script):
+                return js_result
+        
+        driver = FakeDriverJS()
         scraper = ComputrabajoScraper(driver=driver)
         scraper.abrir_pagina_empleos(dias=1)
         scraper.buscar_vacante("Data Scientist")
-        with patch("src.computrabajo.WebDriverWait", lambda d, t: DummyWait(d, container)):
-            puestos = scraper.extraer_puestos(timeout=5)
+        puestos = scraper.extraer_puestos(timeout=5)
 
-        # Expect 2 valid, duplicates/irrelevant filtered out
+        # Expect 2 valid, duplicates filtered out
         urls = {p["url"] for p in puestos}
         self.assertEqual(len(urls), 2)
-        self.assertIn("https://pe.computrabajo.com/trabajo-de-data-scientist?pubdate=1#XYZ987", urls)
-        self.assertIn("https://pe.computrabajo.com/trabajo-de-data-engineer?pubdate=1#XYZ988", urls)
+        # URLs sin fragmento (#)
+        self.assertIn("https://pe.computrabajo.com/ofertas-de-trabajo/oferta-de-trabajo-de-data-scientist-XYZ987", urls)
+        self.assertIn("https://pe.computrabajo.com/ofertas-de-trabajo/oferta-de-trabajo-de-data-engineer-XYZ988", urls)
 
     def test_with_retries_aborts_on_block(self):
         with patch("src.pipeline.time.sleep") as mock_sleep, patch("src.pipeline.logger") as mock_logger:

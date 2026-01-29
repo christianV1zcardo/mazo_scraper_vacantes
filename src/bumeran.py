@@ -8,8 +8,6 @@ from typing import Any, Dict, List, Optional
 
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.webdriver.support.ui import WebDriverWait
 
 from .core.base import BaseScraper, BlockDetected
 
@@ -39,24 +37,94 @@ class BumeranScraper(BaseScraper):
             self._fallback_search(palabra_clave)
 
     def extraer_puestos(self, timeout: int = 10) -> List[JobData]:
+        """Extrae puestos usando JavaScript para máxima velocidad."""
         try:
             if self.detecta_bloqueo():
                 raise BlockDetected("Captcha o bloqueo detectado en Bumeran")
-            return self._extract_from_links(timeout=timeout)
+            return self._extract_with_js()
+        except BlockDetected:
+            raise
         except Exception:
-            # Reintento rápido con un selector alternativo
-            try:
-                if self.detecta_bloqueo():
-                    raise BlockDetected("Captcha o bloqueo detectado en Bumeran (fallback)")
-                return self._extract_fallback(timeout=max(2, timeout // 2))
-            except Exception:
-                return []
+            return []
+
+    def _extract_with_js(self) -> List[JobData]:
+        """Extrae todos los datos con una sola llamada JavaScript."""
+        raw_jobs = self.driver.execute_script('''
+            const anchors = document.querySelectorAll('a[href*="/empleos/"]');
+            if (!anchors.length) return [];
+            
+            const excludeTokens = ['busqueda-', 'publicacion-menor', 'relevantes=', 'recientes='];
+            
+            return Array.from(anchors).map(anchor => {
+                const href = anchor.getAttribute('href') || '';
+                if (!href.includes('/empleos/')) return null;
+                if (excludeTokens.some(t => href.includes(t))) return null;
+                
+                // Título: buscar h1-h5
+                let titulo = '';
+                for (const tag of ['h1', 'h2', 'h3', 'h4', 'h5']) {
+                    const el = anchor.querySelector(tag);
+                    if (el) {
+                        const txt = (el.textContent || '').trim().split('\\n')[0];
+                        if (txt && !txt.toLowerCase().startsWith('publicado')) {
+                            titulo = txt;
+                            break;
+                        }
+                    }
+                }
+                if (!titulo) {
+                    titulo = (anchor.textContent || '').trim().split('\\n')[0];
+                }
+                if (!titulo) return null;
+                
+                // Empresa: buscar h3 que no sea título ni "Publicado..."
+                let empresa = '';
+                const h3s = anchor.querySelectorAll('h3');
+                for (const h3 of h3s) {
+                    const txt = (h3.textContent || '').trim().split('\\n')[0];
+                    if (!txt) continue;
+                    const lower = txt.toLowerCase();
+                    if (lower.startsWith('publicado') || lower.startsWith('hace ')) continue;
+                    if (txt === titulo) continue;
+                    empresa = txt;
+                    break;
+                }
+                
+                return { href, titulo, empresa };
+            }).filter(j => j && j.titulo);
+        ''')
+        
+        if not raw_jobs:
+            return []
+        
+        payloads: List[JobData] = []
+        seen = set()
+        base_url = "https://www.bumeran.com.pe"
+        for job in raw_jobs:
+            href = job.get("href", "")
+            if not href or href in seen:
+                continue
+            seen.add(href)
+            # Convertir URLs relativas a absolutas
+            if href.startswith("/"):
+                full_url = f"{base_url}{href}"
+            else:
+                full_url = href
+            payloads.append({
+                "titulo": job.get("titulo", ""),
+                "url": full_url,
+                "empresa": job.get("empresa", ""),
+            })
+        
+        return payloads
 
     def extraer_todos_los_puestos(self, timeout: int = 10, page_wait: float = 1.0) -> List[JobData]:
+        # Reducir page_wait para mayor velocidad
+        effective_wait = min(page_wait, 0.5)
         return self.gather_paginated(
             extractor=lambda: self.extraer_puestos(timeout=timeout),
             navigator=self.navegar_a_pagina,
-            page_wait=page_wait,
+            page_wait=effective_wait,
             source_label="bumeran",
         )
 
@@ -71,7 +139,7 @@ class BumeranScraper(BaseScraper):
                 (parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment)
             )
             self.driver.get(refreshed)
-            time.sleep(1)
+            time.sleep(0.3)  # Reducido para mayor velocidad
             return True
         except Exception:
             return False
@@ -103,61 +171,6 @@ class BumeranScraper(BaseScraper):
         except Exception:
             pass
 
-    def _extract_from_links(self, timeout: int) -> List[JobData]:
-        wait = WebDriverWait(self.driver, timeout)
-        container = wait.until(EC.presence_of_element_located((By.ID, "listado-avisos")))
-        anchors = container.find_elements(By.TAG_NAME, "a")
-        payloads: List[JobData] = []
-        seen = set()
-        for anchor in anchors:
-            try:
-                href = anchor.get_attribute("href")
-                if not href:
-                    continue
-                if "/empleos/" not in href:
-                    continue
-                if any(token in href for token in ("busqueda-", "publicacion-menor", "relevantes=", "recientes=")):
-                    continue
-                if href in seen:
-                    continue
-                title = self._extract_title(anchor)
-                if not title:
-                    continue
-                company = self._extract_company(anchor)
-                payloads.append({"titulo": title, "url": href, "empresa": company})
-                seen.add(href)
-            except Exception:
-                continue
-        return payloads
-
-    def _extract_fallback(self, timeout: int) -> List[JobData]:
-        wait = WebDriverWait(self.driver, timeout)
-        # Buscar tarjetas comunes cuando el contenedor cambia de ID
-        wait.until(
-            lambda d: d.find_elements(By.CSS_SELECTOR, "a[href*='/empleos/']")
-        )
-        anchors = self.driver.find_elements(By.CSS_SELECTOR, "a[href*='/empleos/']")
-        payloads: List[JobData] = []
-        seen = set()
-        for anchor in anchors:
-            try:
-                href = anchor.get_attribute("href")
-                if not href or "/empleos/" not in href:
-                    continue
-                if any(token in href for token in ("busqueda-", "publicacion-menor", "relevantes=", "recientes=")):
-                    continue
-                if href in seen:
-                    continue
-                title = self._extract_title(anchor)
-                if not title:
-                    continue
-                company = self._extract_company(anchor)
-                payloads.append({"titulo": title, "url": href, "empresa": company})
-                seen.add(href)
-            except Exception:
-                continue
-        return payloads
-
     def detecta_bloqueo(self) -> bool:
         try:
             source = (getattr(self.driver, "page_source", "") or "").lower()
@@ -172,60 +185,3 @@ class BumeranScraper(BaseScraper):
             "access denied",
         )
         return any(token in source for token in tokens)
-
-    def _extract_title(self, anchor) -> str:
-        for tag in ("h1", "h2", "h3", "h4", "h5"):
-            elements = anchor.find_elements(By.TAG_NAME, tag)
-            if elements:
-                text = elements[0].text.strip()
-                if text:
-                    return text
-        return (anchor.text or "").split("\n")[0].strip()
-
-    def _extract_company(self, anchor) -> str:
-        """Extract company name from Bumeran card.
-
-        Based on provided markup, company appears as an H3 under a span wrapper
-        (e.g., <h3 class="sc-igZVbQ ...">FINANCIERA ADES</h3>) or
-        <h3 class="sc-ebDnpS ...">Lindcorp</h3>.
-        We avoid picking 'Publicado ...' or the job title itself.
-        """
-        # Try specific likely patterns first
-        specific_selectors = [
-            "span.sc-Ehqfj h3",
-            "h3.sc-igZVbQ",
-            "h3.sc-ebDnpS",
-        ]
-
-        def _clean(txt: str) -> str:
-            return (txt or "").strip().split("\n")[0]
-
-        # Obtain the job title text to avoid confusing it with company
-        title_elems = anchor.find_elements(By.CSS_SELECTOR, "h2")
-        title_text = _clean(title_elems[0].text) if title_elems else ""
-
-        # Filters to exclude non-company h3s
-        def _is_company_candidate(txt: str) -> bool:
-            if not txt:
-                return False
-            low = txt.lower()
-            if low.startswith("publicado") or low.startswith("hace "):
-                return False
-            if title_text and txt == title_text:
-                return False
-            return True
-
-        for sel in specific_selectors:
-            elems = anchor.find_elements(By.CSS_SELECTOR, sel)
-            for el in elems:
-                txt = _clean(el.text)
-                if _is_company_candidate(txt):
-                    return txt
-
-        # Generic fallback: any h3 inside the anchor that passes filters
-        for el in anchor.find_elements(By.CSS_SELECTOR, "h3"):
-            txt = _clean(el.text)
-            if _is_company_candidate(txt):
-                return txt
-
-        return ""
